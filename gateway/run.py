@@ -3550,6 +3550,9 @@ class GatewayRunner:
             }
             await self.hooks.emit("agent:start", hook_ctx)
 
+            # Attach raw_message to source for tool-reaction support
+            source._raw_message = getattr(event, "raw_message", None)
+
             # Run the agent
             agent_result = await self._run_agent(
                 message=message_text,
@@ -7461,6 +7464,14 @@ class GatewayRunner:
             if not progress_queue:
                 return
 
+            # Emit reaction events for web_search tool
+            if tool_name and "web_search" in (tool_name or ""):
+                if event_type == "tool.started":
+                    progress_queue.put(("__reaction_add__", "🔍"))
+                elif event_type == "tool.completed":
+                    progress_queue.put(("__reaction_remove__", "🔍"))
+                    return
+
             # Only act on tool.started events (ignore tool.completed, reasoning.available, etc.)
             if event_type not in ("tool.started",):
                 return
@@ -7564,6 +7575,17 @@ class GatewayRunner:
             while True:
                 try:
                     raw = progress_queue.get_nowait()
+
+                    # Handle reaction events for tool-specific reactions
+                    if isinstance(raw, tuple) and len(raw) == 2 and raw[0] in ("__reaction_add__", "__reaction_remove__"):
+                        _react_action, _react_emoji = raw
+                        _raw_msg = getattr(source, "_raw_message", None)
+                        if _raw_msg and hasattr(adapter, "_add_reaction"):
+                            if _react_action == "__reaction_add__":
+                                await adapter._add_reaction(_raw_msg, _react_emoji)
+                            else:
+                                await adapter._remove_reaction(_raw_msg, _react_emoji)
+                        continue
 
                     # Handle dedup messages: update last line with repeat counter
                     if isinstance(raw, tuple) and len(raw) == 3 and raw[0] == "__dedup__":

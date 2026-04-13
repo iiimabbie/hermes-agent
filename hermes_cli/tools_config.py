@@ -215,6 +215,14 @@ TOOL_CATEGORIES = {
                     {"key": "FIRECRAWL_API_URL", "prompt": "Your Firecrawl instance URL (e.g., http://localhost:3002)"},
                 ],
             },
+            {
+                "name": "Gemini",
+                "tag": "Google Search Grounding via Gemini API",
+                "web_backend": "gemini",
+                "env_vars": [
+                    {"key": "GEMINI_SEARCH_API_KEY", "prompt": "Gemini API key", "url": "https://aistudio.google.com/apikey"},
+                ],
+            },
         ],
     },
     "image_gen": {
