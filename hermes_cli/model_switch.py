@@ -958,6 +958,12 @@ def list_authenticated_providers(
             default_model = (entry.get("model") or "").strip()
             if default_model:
                 models_list.append(default_model)
+            # Also load models list (plural) for custom providers with multiple models
+            extra_models = entry.get("models") or []
+            if isinstance(extra_models, list):
+                for m in extra_models:
+                    if isinstance(m, str) and m.strip() and m.strip() not in models_list:
+                        models_list.append(m.strip())
 
             results.append({
                 "slug": slug,
