@@ -570,8 +570,11 @@ class DiscordAdapter(BasePlatformAdapter):
                     return
 
                 # Check if the message author is in the allowed user list
-                if not self._is_allowed_user(str(message.author.id)):
-                    return
+                # DMs: enforce allowlist strictly. Channels: allow everyone.
+                if isinstance(message.channel, discord.DMChannel):
+                    if not self._is_allowed_user(str(message.author.id)):
+                        return
+
 
                 # Bot message filtering (DISCORD_ALLOW_BOTS):
                 #   "none"     — ignore all other bots (default)
@@ -748,7 +751,7 @@ class DiscordAdapter(BasePlatformAdapter):
             return
         message = event.raw_message
         if hasattr(message, "add_reaction"):
-            await self._add_reaction(message, "👀")
+            await self._add_reaction(message, "<a:loading:1376829610020442122>")
 
     async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
         """Swap the in-progress reaction for a final success/failure reaction."""
@@ -756,9 +759,9 @@ class DiscordAdapter(BasePlatformAdapter):
             return
         message = event.raw_message
         if hasattr(message, "add_reaction"):
-            await self._remove_reaction(message, "👀")
+            await self._remove_reaction(message, "<a:loading:1376829610020442122>")
             if outcome == ProcessingOutcome.SUCCESS:
-                await self._add_reaction(message, "✅")
+                await self._add_reaction(message, "<:claude:1493098630138171403>")
             elif outcome == ProcessingOutcome.FAILURE:
                 await self._add_reaction(message, "❌")
 
