@@ -88,13 +88,14 @@ def _get_backend() -> str:
     keys manually without running setup.
     """
     configured = (_load_web_config().get("backend") or "").lower().strip()
-    if configured in ("parallel", "firecrawl", "tavily", "exa"):
+    if configured in ("parallel", "firecrawl", "tavily", "exa", "gemini"):
         return configured
 
     # Fallback for manual / legacy config — pick the highest-priority
     # available backend. Firecrawl also counts as available when the managed
     # tool gateway is configured for Nous subscribers.
     backend_candidates = (
+        ("gemini", _has_env("GEMINI_SEARCH_API_KEY") or _has_env("GEMINI_API_KEY")),
         ("firecrawl", _has_env("FIRECRAWL_API_KEY") or _has_env("FIRECRAWL_API_URL") or _is_tool_gateway_ready()),
         ("parallel", _has_env("PARALLEL_API_KEY")),
         ("tavily", _has_env("TAVILY_API_KEY")),
@@ -117,6 +118,8 @@ def _is_backend_available(backend: str) -> bool:
         return check_firecrawl_api_key()
     if backend == "tavily":
         return _has_env("TAVILY_API_KEY")
+    if backend == "gemini":
+        return _has_env("GEMINI_SEARCH_API_KEY") or _has_env("GEMINI_API_KEY")
     return False
 
 # ─── Firecrawl Client ────────────────────────────────────────────────────────
@@ -278,6 +281,98 @@ def _get_async_parallel_client():
             )
         _async_parallel_client = AsyncParallel(api_key=api_key)
     return _async_parallel_client
+
+# ─── Gemini Search (Google Search Grounding) ────────────────────────────────
+
+_GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+_GEMINI_SEARCH_MODEL = "gemini-2.5-flash"
+
+
+def _gemini_search(query: str, limit: int = 5) -> dict:
+    """Search using Gemini's Google Search grounding.
+
+    Sends a generateContent request with the google_search tool enabled.
+    Extracts citations from groundingMetadata.groundingChunks and the
+    AI-synthesized answer from the response content.
+    """
+    api_key = os.getenv("GEMINI_SEARCH_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "GEMINI_SEARCH_API_KEY or GEMINI_API_KEY environment variable not set. "
+            "Get your API key at https://aistudio.google.com/apikey"
+        )
+
+    url = f"{_GEMINI_API_BASE}/models/{_GEMINI_SEARCH_MODEL}:generateContent"
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+    body = {
+        "contents": [{"parts": [{"text": query}]}],
+        "tools": [{"google_search": {}}],
+    }
+
+    logger.info("Gemini search: '%s'", query)
+    response = httpx.post(url, json=body, headers=headers, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+
+    if data.get("error"):
+        raise ValueError(f"Gemini API error ({data['error'].get('code')}): {data['error'].get('message')}")
+
+    candidate = (data.get("candidates") or [{}])[0]
+    # Extract AI-synthesized answer
+    content_parts = (candidate.get("content") or {}).get("parts") or []
+    answer = "\n".join(p.get("text", "") for p in content_parts if p.get("text"))
+
+    # Extract citations from grounding metadata
+    grounding = candidate.get("groundingMetadata") or {}
+    chunks = grounding.get("groundingChunks") or []
+
+    web_results = []
+    for i, chunk in enumerate(chunks):
+        web = chunk.get("web") or {}
+        uri = web.get("uri", "")
+        title = web.get("title", "")
+        if uri:
+            # Resolve Google redirect URLs
+            resolved_url = _resolve_gemini_redirect(uri)
+            web_results.append({
+                "title": title,
+                "url": resolved_url,
+                "description": "",
+                "position": i + 1,
+            })
+        if len(web_results) >= limit:
+            break
+
+    # If we got an answer but few/no citations, include the answer as description
+    if answer and web_results:
+        web_results[0]["description"] = answer[:500]
+    elif answer and not web_results:
+        web_results.append({
+            "title": "Gemini Search Result",
+            "url": "",
+            "description": answer[:1000],
+            "position": 1,
+        })
+
+    return {"success": True, "data": {"web": web_results}}
+
+
+def _resolve_gemini_redirect(url: str) -> str:
+    """Resolve Google redirect URLs to direct URLs."""
+    if "google.com/url" not in url and "googleapis.com" not in url:
+        return url
+    try:
+        resp = httpx.head(url, follow_redirects=True, timeout=5)
+        final = str(resp.url)
+        if final.startswith("http"):
+            return final
+    except Exception:
+        pass
+    return url
+
 
 # ─── Tavily Client ───────────────────────────────────────────────────────────
 
@@ -1083,6 +1178,15 @@ def web_search_tool(query: str, limit: int = 5) -> str:
 
         # Dispatch to the configured backend
         backend = _get_backend()
+        if backend == "gemini":
+            response_data = _gemini_search(query, limit)
+            debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
+            result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
+            debug_call_data["final_response_size"] = len(result_json)
+            _debug.log_call("web_search_tool", debug_call_data)
+            _debug.save()
+            return result_json
+
         if backend == "parallel":
             response_data = _parallel_search(query, limit)
             debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
