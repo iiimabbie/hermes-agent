@@ -3236,7 +3236,13 @@ class AIAgent:
         if platform_key in PLATFORM_HINTS:
             prompt_parts.append(PLATFORM_HINTS[platform_key])
 
-        return "\n\n".join(p.strip() for p in prompt_parts if p.strip())
+        result = "\n\n".join(p.strip() for p in prompt_parts if p.strip())
+
+        # Scrub third-party framework identifiers for Anthropic API compatibility
+        if self._tool_name_remap:
+            result = result.replace("Hermes Agent", "assistant").replace("Hermes", "assistant").replace("hermes", "assistant")
+
+        return result
 
     # =========================================================================
     # Pre/post-call guardrails (inspired by PR #1321 — @alireza78a)
