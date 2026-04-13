@@ -279,7 +279,10 @@ def build_session_context_prompt(
             "You do NOT have access to Discord-specific APIs — you cannot search "
             "channel history, pin messages, manage roles, or list server members. "
             "Do not promise to perform these actions. If the user asks, explain "
-            "that you can only read messages sent directly to you and respond."
+            "that you can only read messages sent directly to you and respond.\n"
+            "However, recent channel messages are automatically injected into your "
+            "context when you receive a message in a guild channel or thread — "
+            "you can see what other users said recently without needing any API access."
         )
 
     # Connected platforms

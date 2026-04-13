@@ -2478,6 +2478,52 @@ class DiscordAdapter(BasePlatformAdapter):
         if pending_text_injection:
             event_text = f"{pending_text_injection}\n\n{event_text}" if event_text else pending_text_injection
 
+        # ── Channel history injection ────────────────────────────────
+        # In guild channels/threads, fetch recent messages so the agent
+        # can see what other users said (group_sessions_per_user isolates
+        # sessions, so without this the agent has zero cross-user context).
+        if not isinstance(message.channel, discord.DMChannel):
+            history_limit = int(os.getenv("DISCORD_CHANNEL_HISTORY_LIMIT", "30"))
+            if history_limit > 0:
+                try:
+                    history_lines: list[str] = []
+                    async for hist_msg in message.channel.history(
+                        limit=history_limit,
+                        before=message,            # only messages before the current one
+                    ):
+                        # Skip bot's own messages that are system/status noise
+                        if hist_msg.author == self._client.user:
+                            author = "[Bot]"
+                        elif getattr(hist_msg.author, "bot", False):
+                            author = f"[Bot:{hist_msg.author.display_name}]"
+                        else:
+                            author = hist_msg.author.display_name
+                        # Truncate very long messages in history
+                        content = hist_msg.content or ""
+                        if len(content) > 500:
+                            content = content[:500] + "…"
+                        # Clean bot mention from history messages too
+                        if self._client.user:
+                            content = content.replace(f"<@{self._client.user.id}>", "@Bot")
+                            content = content.replace(f"<@!{self._client.user.id}>", "@Bot")
+                        if content.strip():
+                            ts = hist_msg.created_at.strftime("%H:%M")
+                            history_lines.append(f"[{ts}] {author}: {content}")
+
+                    if history_lines:
+                        # Reverse to chronological order (history() returns newest-first)
+                        history_lines.reverse()
+                        history_block = "\n".join(history_lines)
+                        event_text = (
+                            f"[Recent channel history — for context only, do NOT re-answer old messages]\n"
+                            f"{history_block}\n"
+                            f"[End of history — the user's new message follows]\n\n"
+                            f"{event_text}"
+                        )
+                except Exception as e:
+                    logger.warning("[Discord] Failed to fetch channel history: %s", e)
+        # ── End channel history injection ─────────────────────────────
+
         # Defense-in-depth: prevent empty user messages from entering session
         # (can happen when user sends @mention-only with no other text)
         if not event_text or not event_text.strip():
