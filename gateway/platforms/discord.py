@@ -2275,12 +2275,28 @@ class DiscordAdapter(BasePlatformAdapter):
             require_mention = os.getenv("DISCORD_REQUIRE_MENTION", "true").lower() not in ("false", "0", "no")
             is_free_channel = bool(channel_ids & free_channels)
 
-            # Skip the mention check if the message is in a thread where
-            # the bot has previously participated (auto-created or replied in).
+            # In threads where the bot has participated, accept messages that
+            # either @mention the bot OR are a reply to one of the bot's messages.
+            # This prevents the bot from responding to every message in the thread
+            # while still allowing natural interaction via mention or reply.
             in_bot_thread = is_thread and thread_id in self._threads
 
-            if require_mention and not is_free_channel and not in_bot_thread:
-                if self._client.user not in message.mentions:
+            if require_mention and not is_free_channel:
+                bot_mentioned = (
+                    self._client.user is not None
+                    and self._client.user in message.mentions
+                )
+                # Check if the message is a reply to one of the bot's messages
+                replied_to_bot = False
+                if in_bot_thread and message.reference and message.reference.message_id:
+                    try:
+                        ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                        if ref_msg.author == self._client.user:
+                            replied_to_bot = True
+                    except Exception:
+                        pass
+
+                if not bot_mentioned and not replied_to_bot:
                     return
 
             if self._client.user and self._client.user in message.mentions:
