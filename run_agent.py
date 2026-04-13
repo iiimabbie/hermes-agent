@@ -570,6 +570,7 @@ class AIAgent:
         checkpoint_max_snapshots: int = 50,
         pass_session_id: bool = False,
         persist_session: bool = True,
+        chat_type: str = None,
     ):
         """
         Initialize the AI Agent.
@@ -623,6 +624,7 @@ class AIAgent:
         self.quiet_mode = quiet_mode
         self.ephemeral_system_prompt = ephemeral_system_prompt
         self.platform = platform  # "cli", "telegram", "discord", "whatsapp", etc.
+        self.chat_type = chat_type  # "dm", "group", "channel", "thread"
         self._user_id = user_id  # Platform user identifier (gateway sessions)
         # Pluggable print function — CLI replaces this with _cprint so that
         # raw ANSI status lines are routed through prompt_toolkit's renderer
@@ -978,11 +980,25 @@ class AIAgent:
             disabled_toolsets=disabled_toolsets,
             quiet_mode=self.quiet_mode,
         )
-        
+
+        # Remap tool names for Claude/Anthropic models to avoid third-party detection
+        self._tool_name_remap = {}  # claude_name -> hermes_name
+        _model_lower = (self.model or "").lower()
+        if "claude" in _model_lower or self.provider in ("anthropic",):
+            from hermes_constants import TOOL_NAME_TO_CLAUDE, TOOL_NAME_FROM_CLAUDE
+            for tool in self.tools:
+                orig_name = tool["function"]["name"]
+                if orig_name in TOOL_NAME_TO_CLAUDE:
+                    claude_name = TOOL_NAME_TO_CLAUDE[orig_name]
+                    tool["function"]["name"] = claude_name
+                    self._tool_name_remap[claude_name] = orig_name
+
         # Show tool configuration and store valid tool names for validation
+        # Include both remapped names (sent to API) and original names (used internally)
         self.valid_tool_names = set()
         if self.tools:
             self.valid_tool_names = {tool["function"]["name"] for tool in self.tools}
+            self.valid_tool_names.update(self._tool_name_remap.values())
             tool_names = sorted(self.valid_tool_names)
             if not self.quiet_mode:
                 print(f"🛠️  Loaded {len(self.tools)} tools: {', '.join(tool_names)}")
@@ -1106,6 +1122,7 @@ class AIAgent:
                     self._memory_store = MemoryStore(
                         memory_char_limit=mem_config.get("memory_char_limit", 2200),
                         user_char_limit=mem_config.get("user_char_limit", 1375),
+                        chat_type=self.chat_type,
                     )
                     self._memory_store.load_from_disk()
             except Exception:
@@ -3074,7 +3091,7 @@ class AIAgent:
         # Try SOUL.md as primary identity (unless context files are skipped)
         _soul_loaded = False
         if not self.skip_context_files:
-            _soul_content = load_soul_md()
+            _soul_content = load_soul_md(chat_type=getattr(self, "chat_type", None))
             if _soul_content:
                 prompt_parts = [_soul_content]
                 _soul_loaded = True
@@ -6829,7 +6846,7 @@ class AIAgent:
         # ── Parse args + pre-execution bookkeeping ───────────────────────
         parsed_calls = []  # list of (tool_call, function_name, function_args)
         for tool_call in tool_calls:
-            function_name = tool_call.function.name
+            function_name = self._tool_name_remap.get(tool_call.function.name, tool_call.function.name)
 
             # Reset nudge counters
             if function_name == "memory":
@@ -7032,7 +7049,7 @@ class AIAgent:
                     messages.append(skip_msg)
                 break
 
-            function_name = tool_call.function.name
+            function_name = self._tool_name_remap.get(tool_call.function.name, tool_call.function.name)
 
             # Reset nudge counters when the relevant tool is actually used
             if function_name == "memory":

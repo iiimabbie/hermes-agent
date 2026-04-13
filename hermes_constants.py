@@ -17,6 +17,40 @@ def get_hermes_home() -> Path:
     return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 
 
+# Tool name mapping: Hermes → Claude Code (for Anthropic API compatibility)
+# Each value must be unique to avoid "Tool names must be unique" API error
+TOOL_NAME_TO_CLAUDE = {
+    "terminal": "Bash",
+    "read_file": "Read",
+    "write_file": "Write",
+    "patch": "Edit",
+    "search_files": "Grep",
+    "web_search": "WebSearch",
+    "web_extract": "WebFetch",
+    "todo": "TodoWrite",
+    "process": "Monitor",
+    "vision_analyze": "View",
+}
+TOOL_NAME_FROM_CLAUDE = {v: k for k, v in TOOL_NAME_TO_CLAUDE.items()}
+
+
+def get_workspace_home(chat_type: str = None) -> Path:
+    """Return the workspace directory for a given chat type.
+
+    Looks for ``~/.hermes/workspace-{chat_type}/`` first.
+    Falls back to ``~/.hermes/workspace/`` then ``~/.hermes/``.
+    """
+    hermes_home = get_hermes_home()
+    if chat_type:
+        ws = hermes_home / f"workspace-{chat_type}"
+        if ws.is_dir():
+            return ws
+    ws_default = hermes_home / "workspace"
+    if ws_default.is_dir():
+        return ws_default
+    return hermes_home
+
+
 def get_default_hermes_root() -> Path:
     """Return the root Hermes directory for profile-level operations.
 
