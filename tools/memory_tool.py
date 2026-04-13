@@ -31,7 +31,7 @@ import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from hermes_constants import get_hermes_home
+from hermes_constants import get_hermes_home, get_workspace_home
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -108,17 +108,23 @@ class MemoryStore:
         Tool responses always reflect this live state.
     """
 
-    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375):
+    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375, chat_type: str = None):
         self.memory_entries: List[str] = []
         self.user_entries: List[str] = []
         self.memory_char_limit = memory_char_limit
         self.user_char_limit = user_char_limit
+        self.chat_type = chat_type
         # Frozen snapshot for system prompt -- set once at load_from_disk()
         self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
 
+    def _get_mem_dir(self) -> Path:
+        """Return workspace-scoped memories directory."""
+        ws = get_workspace_home(self.chat_type)
+        return ws / "memories"
+
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
-        mem_dir = get_memory_dir()
+        mem_dir = self._get_mem_dir()
         mem_dir.mkdir(parents=True, exist_ok=True)
 
         self.memory_entries = self._read_file(mem_dir / "MEMORY.md")
@@ -152,9 +158,8 @@ class MemoryStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             fd.close()
 
-    @staticmethod
-    def _path_for(target: str) -> Path:
-        mem_dir = get_memory_dir()
+    def _path_for(self, target: str) -> Path:
+        mem_dir = self._get_mem_dir()
         if target == "user":
             return mem_dir / "USER.md"
         return mem_dir / "MEMORY.md"
@@ -170,7 +175,7 @@ class MemoryStore:
 
     def save_to_disk(self, target: str):
         """Persist entries to the appropriate file. Called after every mutation."""
-        get_memory_dir().mkdir(parents=True, exist_ok=True)
+        self._get_mem_dir().mkdir(parents=True, exist_ok=True)
         self._write_file(self._path_for(target), self._entries_for(target))
 
     def _entries_for(self, target: str) -> List[str]:

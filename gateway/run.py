@@ -7894,6 +7894,7 @@ class GatewayRunner:
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
                     ephemeral_system_prompt=combined_ephemeral or None,
+                    chat_type=getattr(source, "chat_type", None),
                     prefill_messages=self._prefill_messages or None,
                     reasoning_config=reasoning_config,
                     service_tier=self._service_tier,

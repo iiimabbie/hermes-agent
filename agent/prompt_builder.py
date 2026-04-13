@@ -12,7 +12,7 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from hermes_constants import get_hermes_home, get_skills_dir, is_wsl
+from hermes_constants import get_hermes_home, get_workspace_home, get_skills_dir, is_wsl
 from typing import Optional
 
 from agent.skill_utils import (
@@ -870,12 +870,16 @@ def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE
     return head + marker + tail
 
 
-def load_soul_md() -> Optional[str]:
-    """Load SOUL.md from HERMES_HOME and return its content, or None.
+def load_soul_md(chat_type: Optional[str] = None) -> Optional[str]:
+    """Load SOUL.md from the workspace directory and return its content, or None.
 
     Used as the agent identity (slot #1 in the system prompt).  When this
     returns content, ``build_context_files_prompt`` should be called with
     ``skip_soul=True`` so SOUL.md isn't injected twice.
+
+    When *chat_type* is provided, resolves the workspace directory via
+    ``get_workspace_home(chat_type)`` (e.g. ``workspace-dm/SOUL.md``).
+    Falls back to ``workspace/SOUL.md`` then ``~/.hermes/SOUL.md``.
     """
     try:
         from hermes_cli.config import ensure_hermes_home
@@ -883,18 +887,24 @@ def load_soul_md() -> Optional[str]:
     except Exception as e:
         logger.debug("Could not ensure HERMES_HOME before loading SOUL.md: %s", e)
 
-    soul_path = get_hermes_home() / "SOUL.md"
+    workspace = get_workspace_home(chat_type)
+    soul_path = workspace / "SOUL.md"
+
+    # Fallback to hermes home if not found in workspace
+    if not soul_path.exists():
+        soul_path = get_hermes_home() / "SOUL.md"
+
     if not soul_path.exists():
         return None
     try:
         content = soul_path.read_text(encoding="utf-8").strip()
         if not content:
             return None
-        content = _scan_context_content(content, "SOUL.md")
-        content = _truncate_content(content, "SOUL.md")
+        content = _scan_context_content(content, soul_path.name)
+        content = _truncate_content(content, soul_path.name)
         return content
     except Exception as e:
-        logger.debug("Could not read SOUL.md from %s: %s", soul_path, e)
+        logger.debug("Could not read %s: %s", soul_path, e)
         return None
 
 
